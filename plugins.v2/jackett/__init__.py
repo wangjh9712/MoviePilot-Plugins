@@ -200,10 +200,15 @@ class Jackett(_PluginBase): # 类名保持为 Jackett
                         },
                         mounted() {
                             // Optional: Automatically fetch on page load, or rely on button.
-                            // this.fetchJackettIndexers(); 
+                            this.fetchJackettIndexers(); 
                         },
                         methods: {
                             fetchJackettIndexers() {
+                                console.log("[Jackett Plugin Page] fetchJackettIndexers FUNCTION CALLED!"); // <--- 新增/确保这行在最前面
+                                this.loading = true;
+                                this.jackett_indexers_data = []; 
+                                const apiUrl = "/api/v1/plugin/Jackett/jackett/list_custom_configs"; 
+                                console.log("[Jackett Plugin Page] Requesting API: " + apiUrl);
                                 this.loading = true;
                                 this.jackett_indexers_data = []; 
                                 // CRITICAL: Ensure this path matches the registered API path from logs
