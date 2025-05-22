@@ -51,6 +51,162 @@ class Jackett(_PluginBase): # 类名保持为 Jackett
             logger.warn(f"【{self.plugin_name}】插件已启用，但Jackett Host或API Key未配置。请在插件设置中配置。")
 
     def _fetch_jackett_indexers(self) -> List[Dict[str, Any]]:
+        logger.info(f"【{self.plugin_name}】'_fetch_jackett_indexers' CALLED. Host: {self._host}, API Key: {'[SET]' if self._api_key else '[NOT SET]'}")
+        if not self._host or not self._api_key:
+            logger.error(f"【{self.plugin_name}】Jackett Host 或 API Key 未配置，无法获取索引器。")
+            return []
+        
+        host = self._host.rstrip('/')
+        max_retries = 2 # We might not need many retries if the pre-request works
+        retry_interval = 3 # Shorter interval
+        current_try = 1
+            
+        # Headers for the actual API data request
+        api_headers = {
+            "User-Agent": f"MoviePilot-Plugin-{self.__class__.__name__}/{self.plugin_version}",
+            "X-Api-Key": self._api_key,
+            "Accept": "application/json, text/javascript, */*; q=0.01"
+            # "Content-Type" is not strictly needed for a GET request to the indexers API
+        }
+        logger.debug(f"【{self.plugin_name}】API 请求头 (不含 Content-Type for GET): {api_headers}")
+
+        # Create a session object to persist cookies
+        with requests.Session() as session:
+            # 1. Optional: Attempt password login if password is provided
+            # This helps establish a strong session if successful.
+            if self._password:
+                login_url = f"{host}/UI/Login" # Common login submission URL, might vary slightly
+                dashboard_check_url = f"{host}/UI/Dashboard" # To verify login
+                
+                # First, GET the login page to potentially get CSRF tokens or initial cookies (though Jackett might not use CSRF for login)
+                try:
+                    logger.info(f"【{self.plugin_name}】尝试GET登录页面: {login_url}")
+                    session.get(login_url, verify=False, timeout=10) 
+                    logger.info(f"【{self.plugin_name}】GET登录页面完成。当前Cookies: {session.cookies.get_dict()}")
+                except requests.exceptions.RequestException as e:
+                    logger.warn(f"【{self.plugin_name}】GET登录页面失败: {e}")
+
+                # Then, POST to login
+                login_payload = {
+                    "username": "", # Jackett often doesn't use a username for its simple password auth
+                    "password": self._password,
+                    "rememberMe": "on" # Or "true", check Jackett's form
+                }
+                # Headers for POST login
+                login_post_headers = {
+                    "User-Agent": f"MoviePilot-Plugin-{self.__class__.__name__}/{self.plugin_version}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Referer": login_url # Good practice to set referer for POSTs
+                }
+                try:
+                    logger.info(f"【{self.plugin_name}】尝试用密码POST到登录URL: {login_url}")
+                    # Jackett's actual login endpoint might be /UI/Dashboard directly with POST
+                    # Or /api/v2.0/login, or /UI/Login. We'll try /UI/Login first as it's a common pattern.
+                    # The original code used /UI/Dashboard for POST.
+                    
+                    # Let's try the original approach's target: /UI/Dashboard with password
+                    login_submission_url = f"{host}/UI/Dashboard" # As per original code
+                    logger.info(f"【{self.plugin_name}】尝试POST密码到: {login_submission_url}")
+
+                    login_res = session.post(login_submission_url, data={"password": self._password}, headers=login_post_headers, verify=False, timeout=15, allow_redirects=True)
+                    
+                    logger.info(f"【{self.plugin_name}】密码登录POST响应状态: {login_res.status_code}. URL после POST: {login_res.url}")
+                    logger.info(f"【{self.plugin_name}】密码登录后Cookies: {session.cookies.get_dict()}")
+
+                    # A simple check: if we are redirected back to Login, it likely failed.
+                    if "UI/Login" in login_res.url:
+                        logger.warn(f"【{self.plugin_name}】密码登录后似乎仍停留在登录页，登录可能未成功。")
+                    else:
+                        logger.info(f"【{self.plugin_name}】密码登录POST似乎已完成（未重定向到登录页）。")
+                        # Optionally, try a GET to dashboard to confirm session
+                        # dashboard_get = session.get(dashboard_check_url, verify=False, timeout=10)
+                        # logger.info(f"【{self.plugin_name}】访问Dashboard确认登录状态: {dashboard_get.status_code}, URL: {dashboard_get.url}")
+                        # if "UI/Login" in dashboard_get.url:
+                        #    logger.warn(f"【{self.plugin_name}】密码登录后访问Dashboard仍重定向到登录页。")
+
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"【{self.plugin_name}】密码登录请求失败: {e}")
+            else:
+                # 2. If no password, or even if password login was attempted,
+                #    make a "warm-up" GET request to a known Jackett page (e.g., its base URL or /UI/Dashboard).
+                #    This is crucial if Jackett sets some session cookies even on unauthenticated visits
+                #    or if the API key auth works better with an established session.
+                warm_up_url = f"{host}/" # Try base URL or /UI/Dashboard
+                try:
+                    logger.info(f"【{self.plugin_name}】执行预热请求到: {warm_up_url}")
+                    # Use a generic header for this, or let session use its defaults
+                    session.get(warm_up_url, headers={"User-Agent": api_headers["User-Agent"]}, verify=False, timeout=10, allow_redirects=True)
+                    logger.info(f"【{self.plugin_name}】预热请求完成。当前Cookies: {session.cookies.get_dict()}")
+                except requests.exceptions.RequestException as e:
+                    logger.warn(f"【{self.plugin_name}】预热请求失败: {e}")
+
+            # 3. Now, attempt to get the actual API data using the (potentially cookie-populated) session
+            #    and the X-Api-Key header.
+            indexer_query_url = f"{host}/api/v2.0/indexers?configured=true"
+            
+            current_try = 1 # Reset retry counter for this specific operation
+            while current_try <= max_retries:
+                logger.info(f"【{self.plugin_name}】(使用Session) 请求Jackett索引器列表 (尝试 {current_try}/{max_retries}): {indexer_query_url}")
+                try:
+                    # IMPORTANT: Use the session object for the GET request and ensure API headers are used.
+                    # session.headers should already have User-Agent if set globally,
+                    # but X-Api-Key needs to be there. We'll merge api_headers into session headers.
+                    
+                    # Update session headers with specific API headers for this request
+                    # This ensures X-Api-Key is present for this specific call
+                    current_session_headers = session.headers.copy() # Get existing session headers (like cookies)
+                    current_session_headers.update(api_headers)      # Add/override with our API specific headers
+                    
+                    logger.debug(f"【{self.plugin_name}】发送到API的最终请求头 (含 session cookies): {current_session_headers}")
+
+                    response = session.get(indexer_query_url, headers=current_session_headers, verify=False, timeout=20)
+                    
+                    logger.info(f"【{self.plugin_name}】收到API响应状态: {response.status_code}")
+                    logger.debug(f"【{self.plugin_name}】API响应头: {dict(response.headers)}")
+
+                    if response.status_code == 200:
+                        try:
+                            # Check content type before trying to parse as JSON
+                            content_type = response.headers.get('Content-Type', '').lower()
+                            if 'application/json' in content_type:
+                                indexers = response.json()
+                                if indexers and isinstance(indexers, list):
+                                    logger.info(f"【{self.plugin_name}】成功从Jackett获取到 {len(indexers)} 个索引器 (JSON)。")
+                                    return indexers
+                                else: # Empty list is also a valid JSON response
+                                    logger.info(f"【{self.plugin_name}】从Jackett获取的索引器列表为空 (JSON)。")
+                                    return [] 
+                            else:
+                                logger.error(f"【{self.plugin_name}】Jackett API响应Content-Type不是JSON: '{content_type}'. 响应码200但内容非预期。")
+                                logger.error(f"【{self.plugin_name}】Jackett响应内容 (前500字符): {response.text[:500]}...")
+                                # Treat as error, try again or fail
+                        except json.JSONDecodeError as e:
+                            logger.error(f"【{self.plugin_name}】解析Jackett API响应JSON失败: {e}")
+                            logger.error(f"【{self.plugin_name}】Jackett响应内容 (前500字符): {response.text[:500]}...")
+                    elif response.status_code == 302: # Explicitly handle 302
+                        location = response.headers.get('Location', 'N/A')
+                        logger.warn(f"【{self.plugin_name}】Jackett API请求被重定向 (302) 到: {location}. 这通常意味着认证问题或会话未建立。")
+                    elif response.status_code in [401, 403]:
+                        logger.error(f"【{self.plugin_name}】Jackett API认证或授权失败 (HTTP {response.status_code})。请检查API Key。")
+                        # No point in retrying if it's an auth error with API key
+                        return [] 
+                    else:
+                        logger.warn(f"【{self.plugin_name}】从Jackett API获取索引器列表失败: HTTP {response.status_code}. 内容 (前200): {response.text[:200]}")
+                    
+                except requests.exceptions.Timeout:
+                    logger.warn(f"【{self.plugin_name}】请求Jackett API超时 (尝试 {current_try}/{max_retries}).")
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"【{self.plugin_name}】请求Jackett API网络异常 (尝试 {current_try}/{max_retries}): {e}")
+                except Exception as e: 
+                    logger.error(f"【{self.plugin_name}】请求Jackett API时发生未知错误 (尝试 {current_try}/{max_retries}): {e}", exc_info=True)
+                
+                if current_try < max_retries:
+                    logger.info(f"【{self.plugin_name}】将在 {retry_interval} 秒后重试API请求...")
+                    time.sleep(retry_interval)
+                current_try += 1
+
+        logger.warn(f"【{self.plugin_name}】经过所有尝试后，未能成功从Jackett API获取索引器列表。")
+        return []
         # This method is largely the same as before, focusing on fetching data
         # Removed print statements, relying on logger from the calling function or for specific errors here
         logger.info(f"【{self.plugin_name}】'_fetch_jackett_indexers' CALLED. Host: {self._host}, API Key: {'[SET]' if self._api_key else '[NOT SET]'}")
