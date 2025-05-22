@@ -12,10 +12,10 @@ class Jackett(_PluginBase):
     Jackett 索引器配置生成并输出到日志的插件
     """
     plugin_name = "Jackett 配置日志输出器"
-    plugin_desc = "从 Jackett 获取索引器，格式化为“自定义索引站点”插件配置，并输出到 MoviePilot 日志中。"
+    plugin_desc = "从 Jackett 获取索引器，格式化为“自定义索引站点”插件配置（无分类限制），并输出到 MoviePilot 日志中。"
     plugin_icon = "https://raw.githubusercontent.com/Jackett/Jackett/master/src/Jackett.Common/Content/favicon.ico"
-    plugin_version = "3.4" # Incremented version
-    plugin_author = "jason (modified by AI & NasTools ref)"
+    plugin_version = "3.5" # Incremented version
+    plugin_author = "jason (modified by AI)"
     author_url = "https://github.com/xj-bear"
     plugin_config_prefix = "jackett_"
     plugin_order = 22
@@ -45,58 +45,32 @@ class Jackett(_PluginBase):
             logger.warn(f"【{self.plugin_name}】插件已启用，但Jackett Host或API Key未配置。请在插件设置中配置。")
 
     def _fetch_jackett_indexers(self) -> List[Dict[str, Any]]:
+        # This is the version of _fetch_jackett_indexers that was working in the previous successful step
         logger.info(f"【{self.plugin_name}】'_fetch_jackett_indexers' CALLED. Host: {self._host}, API Key: {'[SET]' if self._api_key else '[NOT SET]'}")
         if not self._host or not self._api_key:
             logger.error(f"【{self.plugin_name}】Jackett Host 或 API Key 未配置，无法获取索引器。")
             return []
-        
         host = self._host.rstrip('/')
         max_retries = 2 
         retry_interval = 3 
-            
         api_headers = {
             "User-Agent": f"MoviePilot-Plugin-{self.__class__.__name__}/{self.plugin_version}",
             "X-Api-Key": self._api_key,
             "Accept": "application/json, text/javascript, */*; q=0.01"
         }
-        # logger.debug(f"【{self.plugin_name}】API 请求头: {api_headers}") # Can be verbose
-
         with requests.Session() as session:
             if self._password:
                 login_url = f"{host}/UI/Login" 
-                try:
-                    # logger.debug(f"【{self.plugin_name}】尝试GET登录页面: {login_url}")
-                    session.get(login_url, verify=False, timeout=10) 
-                    # logger.debug(f"【{self.plugin_name}】GET登录页面完成。当前Cookies: {session.cookies.get_dict()}")
-                except requests.exceptions.RequestException as e:
-                    logger.warn(f"【{self.plugin_name}】GET登录页面失败: {e}")
-
+                try: session.get(login_url, verify=False, timeout=10) 
+                except requests.exceptions.RequestException: pass # Ignore errors for pre-requests
                 login_submission_url = f"{host}/UI/Dashboard"
-                login_post_headers = {
-                    "User-Agent": api_headers["User-Agent"],
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Referer": login_url 
-                }
-                try:
-                    logger.info(f"【{self.plugin_name}】尝试POST密码到: {login_submission_url}")
-                    login_res = session.post(login_submission_url, data={"password": self._password}, headers=login_post_headers, verify=False, timeout=15, allow_redirects=True)
-                    # logger.debug(f"【{self.plugin_name}】密码登录POST响应状态: {login_res.status_code}. URL after POST: {login_res.url}")
-                    # logger.debug(f"【{self.plugin_name}】密码登录后Cookies: {session.cookies.get_dict()}")
-                    if "UI/Login" in login_res.url:
-                        logger.warn(f"【{self.plugin_name}】密码登录后似乎仍停留在登录页，登录可能未成功。")
-                    else:
-                        logger.info(f"【{self.plugin_name}】密码登录POST似乎已完成。")
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"【{self.plugin_name}】密码登录请求失败: {e}")
+                login_post_headers = {"User-Agent": api_headers["User-Agent"], "Content-Type": "application/x-www-form-urlencoded", "Referer": login_url}
+                try: session.post(login_submission_url, data={"password": self._password}, headers=login_post_headers, verify=False, timeout=15, allow_redirects=True)
+                except requests.exceptions.RequestException: pass # Ignore errors for pre-requests
             else:
                 warm_up_url = f"{host}/" 
-                try:
-                    # logger.debug(f"【{self.plugin_name}】执行预热请求到: {warm_up_url}")
-                    session.get(warm_up_url, headers={"User-Agent": api_headers["User-Agent"]}, verify=False, timeout=10, allow_redirects=True)
-                    # logger.debug(f"【{self.plugin_name}】预热请求完成。当前Cookies: {session.cookies.get_dict()}")
-                except requests.exceptions.RequestException as e:
-                    logger.warn(f"【{self.plugin_name}】预热请求失败: {e}")
-
+                try: session.get(warm_up_url, headers={"User-Agent": api_headers["User-Agent"]}, verify=False, timeout=10, allow_redirects=True)
+                except requests.exceptions.RequestException: pass # Ignore errors for pre-requests
             indexer_query_url = f"{host}/api/v2.0/indexers?configured=true"
             current_try = 1
             while current_try <= max_retries:
@@ -104,39 +78,22 @@ class Jackett(_PluginBase):
                 try:
                     current_session_headers = session.headers.copy()
                     current_session_headers.update(api_headers)      
-                    # logger.debug(f"【{self.plugin_name}】发送到API的最终请求头 (含 session cookies): {current_session_headers}")
                     response = session.get(indexer_query_url, headers=current_session_headers, verify=False, timeout=20)
                     logger.info(f"【{self.plugin_name}】收到API响应状态: {response.status_code}")
                     if response.status_code == 200:
                         content_type = response.headers.get('Content-Type', '').lower()
                         if 'application/json' in content_type:
                             indexers = response.json()
-                            if indexers and isinstance(indexers, list):
-                                logger.info(f"【{self.plugin_name}】成功从Jackett获取到 {len(indexers)} 个索引器 (JSON)。")
-                                return indexers
-                            else: 
-                                logger.info(f"【{self.plugin_name}】从Jackett获取的索引器列表为空 (JSON)。")
-                                return [] 
-                        else:
-                            logger.error(f"【{self.plugin_name}】Jackett API响应Content-Type不是JSON: '{content_type}'. 响应码200但内容非预期。")
-                            logger.error(f"【{self.plugin_name}】Jackett响应内容 (前500字符): {response.text[:500]}...")
-                    elif response.status_code == 302:
-                        location = response.headers.get('Location', 'N/A')
-                        logger.warn(f"【{self.plugin_name}】Jackett API请求被重定向 (302) 到: {location}.")
-                    elif response.status_code in [401, 403]:
-                        logger.error(f"【{self.plugin_name}】Jackett API认证或授权失败 (HTTP {response.status_code})。请检查API Key。")
-                        return [] 
-                    else:
-                        logger.warn(f"【{self.plugin_name}】从Jackett API获取索引器列表失败: HTTP {response.status_code}. 内容 (前200): {response.text[:200]}")
-                except requests.exceptions.Timeout:
-                    logger.warn(f"【{self.plugin_name}】请求Jackett API超时 (尝试 {current_try}/{max_retries}).")
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"【{self.plugin_name}】请求Jackett API网络异常 (尝试 {current_try}/{max_retries}): {e}")
-                except Exception as e: 
-                    logger.error(f"【{self.plugin_name}】请求Jackett API时发生未知错误 (尝试 {current_try}/{max_retries}): {e}", exc_info=True)
-                if current_try < max_retries:
-                    logger.info(f"【{self.plugin_name}】将在 {retry_interval} 秒后重试API请求...")
-                    time.sleep(retry_interval)
+                            if indexers and isinstance(indexers, list): return indexers
+                            return [] 
+                        logger.error(f"【{self.plugin_name}】Jackett API响应Content-Type不是JSON: '{content_type}'. Body: {response.text[:500]}...")
+                    elif response.status_code == 302: logger.warn(f"【{self.plugin_name}】Jackett API请求被重定向 (302) 到: {response.headers.get('Location', 'N/A')}.")
+                    elif response.status_code in [401, 403]: logger.error(f"【{self.plugin_name}】Jackett API认证或授权失败 (HTTP {response.status_code})。"); return [] 
+                    else: logger.warn(f"【{self.plugin_name}】从Jackett API获取索引器列表失败: HTTP {response.status_code}. Body: {response.text[:200]}")
+                except requests.exceptions.RequestException as e: logger.warn(f"【{self.plugin_name}】请求Jackett API网络或超时异常 (尝试 {current_try}): {e}")
+                except json.JSONDecodeError as e: logger.error(f"【{self.plugin_name}】解析Jackett API响应JSON失败 (尝试 {current_try}): {e}. Body: {response.text[:500] if 'response' in locals() else 'No response object'}")
+                except Exception as e: logger.error(f"【{self.plugin_name}】请求Jackett API时发生未知错误 (尝试 {current_try}): {e}", exc_info=True)
+                if current_try < max_retries: time.sleep(retry_interval)
                 current_try += 1
         logger.warn(f"【{self.plugin_name}】经过所有尝试后，未能成功从Jackett API获取索引器列表。")
         return []
@@ -145,7 +102,6 @@ class Jackett(_PluginBase):
         try:
             indexer_id_from_jackett = jackett_indexer.get("id", "") 
             indexer_name_from_jackett = jackett_indexer.get("name", "")
-            jackett_caps = jackett_indexer.get("caps", []) 
 
             if not indexer_id_from_jackett or not indexer_name_from_jackett:
                 logger.warn(f"【{self.plugin_name}】Jackett索引器数据不完整 (缺少ID或名称): {jackett_indexer}")
@@ -153,21 +109,6 @@ class Jackett(_PluginBase):
 
             moviepilot_internal_id = f"jackett_{indexer_id_from_jackett.lower().replace('-', '_')}" 
             actual_jackett_host = self._host.rstrip('/')
-
-            site_categories_from_caps = []
-            if isinstance(jackett_caps, list):
-                for cap in jackett_caps:
-                    cap_id = cap.get("ID")
-                    cap_name = cap.get("Name")
-                    if cap_id and cap_name:
-                        site_categories_from_caps.append({"id": str(cap_id), "name": cap_name})
-            
-            if not site_categories_from_caps:
-                logger.warn(f"【{self.plugin_name}】索引器 '{indexer_name_from_jackett}' 没有提供有效的分类信息 (caps)。将使用一个最小化的默认分类列表。")
-                site_categories_from_caps = [
-                    {"id": "2000", "name": "Movies"},
-                    {"id": "5000", "name": "TV"},
-                ]
             
             mp_indexer_config_json = {
                 "id": moviepilot_internal_id,
@@ -178,7 +119,7 @@ class Jackett(_PluginBase):
                 "public": True, 
                 "proxy": True, 
                 "language": jackett_indexer.get("language", "en-US"),
-                "category": site_categories_from_caps,
+                # "category" field is removed
                 "search": {
                     "paths": [
                         {
@@ -189,7 +130,7 @@ class Jackett(_PluginBase):
                     "params": { 
                         "t": "search",
                         "q": "{keyword}",
-                        "cat": "{cate_id}", 
+                        # "cat" parameter is removed
                         "apikey": self._api_key
                     }
                 },
@@ -205,7 +146,7 @@ class Jackett(_PluginBase):
                     }
                 }
             }
-            # logger.debug(f"【{self.plugin_name}】格式化MoviePilot索引器配置JSON完成 for '{moviepilot_internal_id}' using {len(site_categories_from_caps)} categories from caps.")
+            logger.debug(f"【{self.plugin_name}】格式化MoviePilot索引器配置JSON完成 for '{moviepilot_internal_id}' (无分类限制)")
             return mp_indexer_config_json
         except Exception as e:
             logger.error(f"【{self.plugin_name}】格式化索引器 '{jackett_indexer.get('name', 'N/A')}' 失败: {e}", exc_info=True)
@@ -226,20 +167,15 @@ class Jackett(_PluginBase):
 
         for raw_indexer in raw_jackett_indexers:
             indexer_name = raw_indexer.get("name", "N/A")
-            # logger.debug(f"【{self.plugin_name}】正在处理Jackett索引器: {indexer_name}")
-            
             mp_config_json_object = self._format_indexer_for_moviepilot(raw_indexer)
-            
             if mp_config_json_object:
                 try:
                     domain_part_for_custom_indexer = mp_config_json_object['id']
                     json_str_for_encoding = json.dumps(mp_config_json_object, ensure_ascii=False, indent=None)
                     base64_encoded_json = base64.b64encode(json_str_for_encoding.encode('utf-8')).decode('utf-8')
-                    
                     custom_config_line = f"{domain_part_for_custom_indexer}|{base64_encoded_json}"
                     all_config_lines.append(custom_config_line)
                     output_count +=1
-                    # logger.debug(f"【{self.plugin_name}】为 '{indexer_name}' 生成配置行: {custom_config_line[:50]}...")
                 except Exception as e:
                     logger.error(f"【{self.plugin_name}】为索引器 '{indexer_name}' 生成Base64配置时出错: {e}", exc_info=True)
             else:
@@ -248,8 +184,7 @@ class Jackett(_PluginBase):
         if all_config_lines:
             logger.info(f"【{self.plugin_name}】为 {output_count} 个Jackett索引器生成的“自定义索引站点”配置 (请将以下所有行复制到自定义索引站点插件中，每行一个):")
             logger.info(f"MOVIEPILOT_CUSTOM_INDEXER_CONFIG_BLOCK_START")
-            for line in all_config_lines:
-                logger.info(line)
+            for line in all_config_lines: logger.info(line)
             logger.info(f"MOVIEPILOT_CUSTOM_INDEXER_CONFIG_BLOCK_END")
             logger.info(f"【{self.plugin_name}】共 {output_count} 条配置已记录。")
         else:
@@ -265,54 +200,20 @@ class Jackett(_PluginBase):
             {'component': 'VTextField', 'props': {'model': 'password', 'label': 'Jackett管理密码 (可选)', 'type': 'password', 'placeholder': 'Jackett管理界面配置的Admin password，如未配置可为空。'}},
             {
                 'component': 'VBtn',
-                'props': {
-                    'color': 'secondary',
-                    'class': 'mt-4',
-                    'block': True,
-                },
+                'props': {'color': 'secondary', 'class': 'mt-4', 'block': True,},
                 'text': '手动记录Jackett索引器配置到日志',
-                'events': [
-                    {
-                        'name': 'click',
-                        'value': "() => { this.$axios.get('/api/v1/plugin/Jackett/jackett/trigger_log_configs').then(res => { if(res.data.code === 0) { this.$toast.success(res.data.message || '操作成功，请查看日志。'); } else { this.$toast.error(res.data.message || '操作失败，请查看日志。');} }).catch(err => this.$toast.error('触发日志记录请求失败: ' + (err.response?.data?.message || err.message))); }"
-                    }
-                ]
+                'events': [{'name': 'click', 'value': "() => { this.$axios.get('/api/v1/plugin/Jackett/jackett/trigger_log_configs').then(res => { if(res.data.code === 0) { this.$toast.success(res.data.message || '操作成功，请查看日志。'); } else { this.$toast.error(res.data.message || '操作失败，请查看日志。');} }).catch(err => this.$toast.error('触发日志记录请求失败: ' + (err.response?.data?.message || err.message))); }"}]
             }
-        ], { 
-            "enabled": False, 
-            "host": "", 
-            "api_key": "", 
-            "password": ""
-        }
+        ], {"enabled": False, "host": "", "api_key": "", "password": ""}
 
-    def get_state(self) -> bool:
-        return self._enabled
-
-    def stop_service(self) -> None:
-        logger.info(f"【{self.plugin_name} ({self.__class__.__name__})】插件服务已停止。")
-
-    def get_page(self) -> Optional[List[dict]]:
-        return None 
-
+    def get_state(self) -> bool: return self._enabled
+    def stop_service(self) -> None: logger.info(f"【{self.plugin_name} ({self.__class__.__name__})】插件服务已停止。")
+    def get_page(self) -> Optional[List[dict]]: return None 
     def get_api(self) -> List[dict]:
-        return [
-            {
-                "path": "/jackett/trigger_log_configs", 
-                "endpoint": self.api_trigger_log_configs,
-                "methods": ["GET"],
-                "summary": "手动触发记录Jackett索引器配置到日志",
-                "description": "调用此API会使插件重新获取Jackett索引器并将其配置输出到日志。"
-            }
-        ]
-
+        return [{"path": "/jackett/trigger_log_configs", "endpoint": self.api_trigger_log_configs, "methods": ["GET"], "summary": "手动触发记录Jackett索引器配置到日志", "description": "调用此API会使插件重新获取Jackett索引器并将其配置输出到日志。"}]
     def api_trigger_log_configs(self):
         logger.info(f"【{self.plugin_name}】收到手动触发记录Jackett配置的API请求。")
-        if not self._enabled:
-            logger.warn(f"【{self.plugin_name}】插件未启用，无法手动记录配置。")
-            return {"code": 1, "message": "插件未启用，请先在设置中启用。"}
-        if not self._host or not self._api_key:
-            logger.warn(f"【{self.plugin_name}】Jackett Host或API Key未配置，无法手动记录配置。")
-            return {"code": 1, "message": "Jackett Host或API Key未配置，请在插件设置中配置。"}
-        
+        if not self._enabled: return {"code": 1, "message": "插件未启用，请先在设置中启用。"}
+        if not self._host or not self._api_key: return {"code": 1, "message": "Jackett Host或API Key未配置，请在插件设置中配置。"}
         self.log_jackett_indexer_configs()
         return {"code": 0, "message": "已尝试记录Jackett索引器配置到MoviePilot日志，请查看日志获取结果。"}
