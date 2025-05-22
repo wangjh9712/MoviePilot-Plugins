@@ -184,74 +184,94 @@ class Jackett(_PluginBase): # 类名保持为 Jackett
     def get_page(self) -> List[dict]:
         return [
             {'component': 'VAlert', 'props': {'type': 'info', 'text': '下方列出了从您的Jackett实例获取的索引器及其对应的“自定义索引站点”配置字符串。请复制所需的配置字符串，然后粘贴到“自定义索引站点”插件的配置文本框中（一行一个）。', 'class': 'mb-4'}},
-            {'component': 'VBtn', 'props': {'color': 'primary', 'block': True, 'class': 'mb-4', 'loading': 'loading'}, 'text': '从Jackett刷新索引器列表', 'events': [{'name': 'click', 'value': 'this.fetchJackettIndexers'}]},
+            {'component': 'VBtn', 'props': {'color': 'primary', 'block': True, 'class': 'mb-4'}, 'text': '从Jackett刷新索引器列表', 'events': [{'name': 'click', 'value': 'this.fetchJackettIndexers'}]},
             {'component': 'VDataTable', 'props': {'headers': [{'text': 'Jackett索引器名称', 'value': 'name', 'sortable': True}, {'text': 'ID (用于域名)', 'value': 'mp_id', 'sortable': True}, {'text': '“自定义索引站点”配置字符串', 'value': 'config_string', 'sortable': False}, {'text': '操作', 'value': 'actions', 'sortable': False}], 'items': 'jackett_indexers_data', 'loading': 'loading', 'loadingText': '正在从Jackett加载索引器...', 'noDataText': '未获取到Jackett索引器，或请先点击上方按钮刷新。', 'itemsPerPage': 10, 'class': 'elevation-1'},
              'scopedSlots': [
                  {'name': 'item.config_string', 'content': {'component': 'VTextarea', 'props': {'value': 'props.item.config_string', 'readonly': True, 'autoGrow': True, 'rows': 2, 'outlined': True, 'dense': True, 'hideDetails': True, 'class': 'pt-2 pb-2'}}},
                  {'name': 'item.actions', 'content': {'component': 'VBtn', 'props': {'icon': True, 'small': True, 'title': '复制配置字符串'}, 'content': [{'component': 'VIcon', 'text': 'mdi-content-copy'}], 'events': [{'name': 'click', 'value': 'this.copyToClipboard(props.item.config_string)'}]}}
              ]},
-            {'component': 'VScript', 'content': '''
+            # {'component': 'VScript', 'content': '''
+            #         export default {
+            #             data() {
+            #                 return {
+            #                     loading: false,
+            #                     jackett_indexers_data: [] 
+            #                 }
+            #             },
+            #             mounted() {
+            #                 // Optional: Automatically fetch on page load, or rely on button.
+            #                 this.fetchJackettIndexers(); 
+            #             },
+            #             methods: {
+            #                 fetchJackettIndexers() {
+            #                     console.log("[Jackett Plugin Page] fetchJackettIndexers FUNCTION CALLED!"); // <--- 新增/确保这行在最前面
+            #                     this.loading = true;
+            #                     this.jackett_indexers_data = []; 
+            #                     const apiUrl = "/api/v1/plugin/Jackett/jackett/list_custom_configs"; 
+            #                     console.log("[Jackett Plugin Page] Requesting API: " + apiUrl);
+            #                     this.loading = true;
+            #                     this.jackett_indexers_data = []; 
+            #                     // CRITICAL: Ensure this path matches the registered API path from logs
+            #                     // Based on logs: /api/v1/plugin/Jackett/jackett/list_custom_configs
+            #                     const apiUrl = "/api/v1/plugin/Jackett/jackett/list_custom_configs"; 
+            #                     console.log("[Jackett Plugin Page] Requesting API: " + apiUrl);
+            #                     this.$axios.get(apiUrl)
+            #                         .then(res => {
+            #                             console.log("[Jackett Plugin Page] API Response:", res);
+            #                             if (res.data && res.data.code === 0 && res.data.data) {
+            #                                 this.jackett_indexers_data = res.data.data;
+            #                                 if (this.jackett_indexers_data.length > 0) {
+            #                                     this.$toast.success(`成功获取 ${this.jackett_indexers_data.length} 个Jackett索引器配置`);
+            #                                 } else {
+            #                                     this.$toast.info("未从Jackett获取到可用索引器，或它们未能正确格式化。检查MoviePilot日志获取更多信息。");
+            #                                 }
+            #                             } else {
+            #                                 const errorMsg = res.data ? (res.data.message || "获取Jackett索引器配置失败，响应代码非0或无数据。") : "获取Jackett索引器配置失败，响应无效。";
+            #                                 this.$toast.error(errorMsg);
+            #                                 console.error("[Jackett Plugin Page] Error fetching/processing data:", errorMsg, res.data);
+            #                             }
+            #                         })
+            #                         .catch(err => {
+            #                             console.error("[Jackett Plugin Page] API request error:", err);
+            #                             let errorMsg = "请求Jackett索引器配置时发生网络或未知错误。";
+            #                             if (err.response && err.response.data && err.response.data.message) {
+            #                                 errorMsg = err.response.data.message;
+            #                             } else if (err.message) {
+            #                                 errorMsg = err.message;
+            #                             }
+            #                             this.$toast.error(errorMsg);
+            #                         })
+            #                         .finally(() => {
+            #                             this.loading = false;
+            #                         });
+            #                 },
+            #                 copyToClipboard(text) {
+            #                     navigator.clipboard.writeText(text).then(() => {
+            #                         this.$toast.success("配置已复制到剪贴板！");
+            #                     }).catch(err => {
+            #                         this.$toast.error("复制失败: " + err);
+            #                         console.error("[Jackett Plugin Page] Failed to copy text: ", err);
+            #                     });
+            #                 }
+            #             }
+            #         }
+            #     '''
+            # }
+            { # 这是新的、极简化的 VScript 组件，用于测试
+                'component': 'VScript',
+                'content': '''
                     export default {
+                        mounted() {
+                            console.log("[Jackett Plugin Page] VScript MOUNTED HOOK EXECUTED - Test1!");
+                        },
                         data() {
                             return {
-                                loading: false,
-                                jackett_indexers_data: [] 
-                            }
+                                message: "VScript data initialized - Test1"
+                            };
                         },
-                        mounted() {
-                            // Optional: Automatically fetch on page load, or rely on button.
-                            this.fetchJackettIndexers(); 
-                        },
-                        methods: {
-                            fetchJackettIndexers() {
-                                console.log("[Jackett Plugin Page] fetchJackettIndexers FUNCTION CALLED!"); // <--- 新增/确保这行在最前面
-                                this.loading = true;
-                                this.jackett_indexers_data = []; 
-                                const apiUrl = "/api/v1/plugin/Jackett/jackett/list_custom_configs"; 
-                                console.log("[Jackett Plugin Page] Requesting API: " + apiUrl);
-                                this.loading = true;
-                                this.jackett_indexers_data = []; 
-                                // CRITICAL: Ensure this path matches the registered API path from logs
-                                // Based on logs: /api/v1/plugin/Jackett/jackett/list_custom_configs
-                                const apiUrl = "/api/v1/plugin/Jackett/jackett/list_custom_configs"; 
-                                console.log("[Jackett Plugin Page] Requesting API: " + apiUrl);
-                                this.$axios.get(apiUrl)
-                                    .then(res => {
-                                        console.log("[Jackett Plugin Page] API Response:", res);
-                                        if (res.data && res.data.code === 0 && res.data.data) {
-                                            this.jackett_indexers_data = res.data.data;
-                                            if (this.jackett_indexers_data.length > 0) {
-                                                this.$toast.success(`成功获取 ${this.jackett_indexers_data.length} 个Jackett索引器配置`);
-                                            } else {
-                                                this.$toast.info("未从Jackett获取到可用索引器，或它们未能正确格式化。检查MoviePilot日志获取更多信息。");
-                                            }
-                                        } else {
-                                            const errorMsg = res.data ? (res.data.message || "获取Jackett索引器配置失败，响应代码非0或无数据。") : "获取Jackett索引器配置失败，响应无效。";
-                                            this.$toast.error(errorMsg);
-                                            console.error("[Jackett Plugin Page] Error fetching/processing data:", errorMsg, res.data);
-                                        }
-                                    })
-                                    .catch(err => {
-                                        console.error("[Jackett Plugin Page] API request error:", err);
-                                        let errorMsg = "请求Jackett索引器配置时发生网络或未知错误。";
-                                        if (err.response && err.response.data && err.response.data.message) {
-                                            errorMsg = err.response.data.message;
-                                        } else if (err.message) {
-                                            errorMsg = err.message;
-                                        }
-                                        this.$toast.error(errorMsg);
-                                    })
-                                    .finally(() => {
-                                        this.loading = false;
-                                    });
-                            },
-                            copyToClipboard(text) {
-                                navigator.clipboard.writeText(text).then(() => {
-                                    this.$toast.success("配置已复制到剪贴板！");
-                                }).catch(err => {
-                                    this.$toast.error("复制失败: " + err);
-                                    console.error("[Jackett Plugin Page] Failed to copy text: ", err);
-                                });
+                        methods: { // 保留一个空的 methods 块或一个简单的方法
+                            testMethod() {
+                                console.log("[Jackett Plugin Page] VScript testMethod CALLED - Test1!");
                             }
                         }
                     }
