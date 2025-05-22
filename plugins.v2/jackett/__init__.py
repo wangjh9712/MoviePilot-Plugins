@@ -1,6 +1,6 @@
 import base64
 import json
-from typing import Dict, Any, List, Optional, Tuple # Tuple is used by get_form
+from typing import Dict, Any, List, Optional, Tuple
 import time
 import requests
 
@@ -14,8 +14,8 @@ class Jackett(_PluginBase):
     plugin_name = "Jackett 配置日志输出器"
     plugin_desc = "从 Jackett 获取索引器，格式化为“自定义索引站点”插件配置，并输出到 MoviePilot 日志中。"
     plugin_icon = "https://raw.githubusercontent.com/Jackett/Jackett/master/src/Jackett.Common/Content/favicon.ico"
-    plugin_version = "3.3" # Incremented version
-    plugin_author = "jason (modified by AI)"
+    plugin_version = "3.4" # Incremented version
+    plugin_author = "jason (modified by AI & NasTools ref)"
     author_url = "https://github.com/xj-bear"
     plugin_config_prefix = "jackett_"
     plugin_order = 22
@@ -59,15 +59,15 @@ class Jackett(_PluginBase):
             "X-Api-Key": self._api_key,
             "Accept": "application/json, text/javascript, */*; q=0.01"
         }
-        logger.debug(f"【{self.plugin_name}】API 请求头 (不含 Content-Type for GET): {api_headers}")
+        # logger.debug(f"【{self.plugin_name}】API 请求头: {api_headers}") # Can be verbose
 
         with requests.Session() as session:
             if self._password:
                 login_url = f"{host}/UI/Login" 
                 try:
-                    logger.info(f"【{self.plugin_name}】尝试GET登录页面: {login_url}")
+                    # logger.debug(f"【{self.plugin_name}】尝试GET登录页面: {login_url}")
                     session.get(login_url, verify=False, timeout=10) 
-                    logger.info(f"【{self.plugin_name}】GET登录页面完成。当前Cookies: {session.cookies.get_dict()}")
+                    # logger.debug(f"【{self.plugin_name}】GET登录页面完成。当前Cookies: {session.cookies.get_dict()}")
                 except requests.exceptions.RequestException as e:
                     logger.warn(f"【{self.plugin_name}】GET登录页面失败: {e}")
 
@@ -80,8 +80,8 @@ class Jackett(_PluginBase):
                 try:
                     logger.info(f"【{self.plugin_name}】尝试POST密码到: {login_submission_url}")
                     login_res = session.post(login_submission_url, data={"password": self._password}, headers=login_post_headers, verify=False, timeout=15, allow_redirects=True)
-                    logger.info(f"【{self.plugin_name}】密码登录POST响应状态: {login_res.status_code}. URL после POST: {login_res.url}")
-                    logger.info(f"【{self.plugin_name}】密码登录后Cookies: {session.cookies.get_dict()}")
+                    # logger.debug(f"【{self.plugin_name}】密码登录POST响应状态: {login_res.status_code}. URL after POST: {login_res.url}")
+                    # logger.debug(f"【{self.plugin_name}】密码登录后Cookies: {session.cookies.get_dict()}")
                     if "UI/Login" in login_res.url:
                         logger.warn(f"【{self.plugin_name}】密码登录后似乎仍停留在登录页，登录可能未成功。")
                     else:
@@ -91,9 +91,9 @@ class Jackett(_PluginBase):
             else:
                 warm_up_url = f"{host}/" 
                 try:
-                    logger.info(f"【{self.plugin_name}】执行预热请求到: {warm_up_url}")
+                    # logger.debug(f"【{self.plugin_name}】执行预热请求到: {warm_up_url}")
                     session.get(warm_up_url, headers={"User-Agent": api_headers["User-Agent"]}, verify=False, timeout=10, allow_redirects=True)
-                    logger.info(f"【{self.plugin_name}】预热请求完成。当前Cookies: {session.cookies.get_dict()}")
+                    # logger.debug(f"【{self.plugin_name}】预热请求完成。当前Cookies: {session.cookies.get_dict()}")
                 except requests.exceptions.RequestException as e:
                     logger.warn(f"【{self.plugin_name}】预热请求失败: {e}")
 
@@ -104,7 +104,7 @@ class Jackett(_PluginBase):
                 try:
                     current_session_headers = session.headers.copy()
                     current_session_headers.update(api_headers)      
-                    logger.debug(f"【{self.plugin_name}】发送到API的最终请求头 (含 session cookies): {current_session_headers}")
+                    # logger.debug(f"【{self.plugin_name}】发送到API的最终请求头 (含 session cookies): {current_session_headers}")
                     response = session.get(indexer_query_url, headers=current_session_headers, verify=False, timeout=20)
                     logger.info(f"【{self.plugin_name}】收到API响应状态: {response.status_code}")
                     if response.status_code == 200:
@@ -145,6 +145,8 @@ class Jackett(_PluginBase):
         try:
             indexer_id_from_jackett = jackett_indexer.get("id", "") 
             indexer_name_from_jackett = jackett_indexer.get("name", "")
+            jackett_caps = jackett_indexer.get("caps", []) 
+
             if not indexer_id_from_jackett or not indexer_name_from_jackett:
                 logger.warn(f"【{self.plugin_name}】Jackett索引器数据不完整 (缺少ID或名称): {jackett_indexer}")
                 return None
@@ -152,16 +154,20 @@ class Jackett(_PluginBase):
             moviepilot_internal_id = f"jackett_{indexer_id_from_jackett.lower().replace('-', '_')}" 
             actual_jackett_host = self._host.rstrip('/')
 
-            site_categories = [
-                {"id": "2000", "name": "Movies - General"},
-                {"id": "2030", "name": "Movies/SD"},
-                {"id": "2040", "name": "Movies/HD"},
-                {"id": "2045", "name": "Movies/UHD"},
-                {"id": "2060", "name": "Movies/3D"},
-                {"id": "5000", "name": "TV - General"},
-                {"id": "5030", "name": "TV/SD"},
-                {"id": "5040", "name": "TV/HD"},
-            ]
+            site_categories_from_caps = []
+            if isinstance(jackett_caps, list):
+                for cap in jackett_caps:
+                    cap_id = cap.get("ID")
+                    cap_name = cap.get("Name")
+                    if cap_id and cap_name:
+                        site_categories_from_caps.append({"id": str(cap_id), "name": cap_name})
+            
+            if not site_categories_from_caps:
+                logger.warn(f"【{self.plugin_name}】索引器 '{indexer_name_from_jackett}' 没有提供有效的分类信息 (caps)。将使用一个最小化的默认分类列表。")
+                site_categories_from_caps = [
+                    {"id": "2000", "name": "Movies"},
+                    {"id": "5000", "name": "TV"},
+                ]
             
             mp_indexer_config_json = {
                 "id": moviepilot_internal_id,
@@ -171,8 +177,8 @@ class Jackett(_PluginBase):
                 "encoding": "UTF-8",
                 "public": True, 
                 "proxy": True, 
-                "language": "zh_CN", 
-                "category": site_categories, 
+                "language": jackett_indexer.get("language", "en-US"),
+                "category": site_categories_from_caps,
                 "search": {
                     "paths": [
                         {
@@ -199,7 +205,7 @@ class Jackett(_PluginBase):
                     }
                 }
             }
-            logger.debug(f"【{self.plugin_name}】格式化MoviePilot索引器配置JSON完成 for '{moviepilot_internal_id}'")
+            # logger.debug(f"【{self.plugin_name}】格式化MoviePilot索引器配置JSON完成 for '{moviepilot_internal_id}' using {len(site_categories_from_caps)} categories from caps.")
             return mp_indexer_config_json
         except Exception as e:
             logger.error(f"【{self.plugin_name}】格式化索引器 '{jackett_indexer.get('name', 'N/A')}' 失败: {e}", exc_info=True)
@@ -220,7 +226,7 @@ class Jackett(_PluginBase):
 
         for raw_indexer in raw_jackett_indexers:
             indexer_name = raw_indexer.get("name", "N/A")
-            logger.debug(f"【{self.plugin_name}】正在处理Jackett索引器: {indexer_name}")
+            # logger.debug(f"【{self.plugin_name}】正在处理Jackett索引器: {indexer_name}")
             
             mp_config_json_object = self._format_indexer_for_moviepilot(raw_indexer)
             
@@ -233,7 +239,7 @@ class Jackett(_PluginBase):
                     custom_config_line = f"{domain_part_for_custom_indexer}|{base64_encoded_json}"
                     all_config_lines.append(custom_config_line)
                     output_count +=1
-                    logger.debug(f"【{self.plugin_name}】为 '{indexer_name}' 生成配置行: {custom_config_line[:50]}...")
+                    # logger.debug(f"【{self.plugin_name}】为 '{indexer_name}' 生成配置行: {custom_config_line[:50]}...")
                 except Exception as e:
                     logger.error(f"【{self.plugin_name}】为索引器 '{indexer_name}' 生成Base64配置时出错: {e}", exc_info=True)
             else:
@@ -251,52 +257,12 @@ class Jackett(_PluginBase):
         logger.info(f"【{self.plugin_name}】Jackett索引器配置记录过程结束。")
 
     def get_form(self) -> Tuple[List[dict], dict]:
-        """
-        获取配置表单，用于用户输入Jackett信息和启用插件。
-        """
         return [
-            {
-                'component': 'VAlert',
-                'props': {
-                    'type': 'info',
-                    'text': '启用并配置Jackett服务器信息后，插件会自动获取Jackett中的索引器，并将其“自定义索引站点”配置字符串输出到MoviePilot的日志中。您需要从日志中复制这些配置。点击下方按钮可手动触发一次日志记录。',
-                    'class': 'mb-4'
-                }
-            },
-            {
-                'component': 'VSwitch',
-                'props': {
-                    'model': 'enabled',
-                    'label': '启用插件'
-                }
-            },
-            {
-                'component': 'VTextField',
-                'props': {
-                    'model': 'host',
-                    'label': 'Jackett地址',
-                    'placeholder': 'http://localhost:9117',
-                    'hint': '请输入Jackett的完整地址，包括http或https前缀。'
-                }
-            },
-            {
-                'component': 'VTextField',
-                'props': {
-                    'model': 'api_key',
-                    'label': 'API Key',
-                    'type': 'password', # Mask input
-                    'placeholder': 'Jackett管理界面右上角的API Key'
-                }
-            },
-            {
-                'component': 'VTextField',
-                'props': {
-                    'model': 'password',
-                    'label': 'Jackett管理密码 (可选)',
-                    'type': 'password', # Mask input
-                    'placeholder': 'Jackett管理界面配置的Admin password，如未配置可为空。'
-                }
-            },
+            {'component': 'VAlert', 'props': {'type': 'info', 'text': '启用并配置Jackett服务器信息后，插件会自动获取Jackett中的索引器，并将其“自定义索引站点”配置字符串输出到MoviePilot的日志中。您需要从日志中复制这些配置。点击下方按钮可手动触发一次日志记录。', 'class': 'mb-4'}},
+            {'component': 'VSwitch', 'props': {'model': 'enabled', 'label': '启用插件'}},
+            {'component': 'VTextField', 'props': {'model': 'host', 'label': 'Jackett地址', 'placeholder': 'http://localhost:9117', 'hint': '请输入Jackett的完整地址，包括http或https前缀。'}},
+            {'component': 'VTextField', 'props': {'model': 'api_key', 'label': 'API Key', 'type': 'password', 'placeholder': 'Jackett管理界面右上角的API Key'}},
+            {'component': 'VTextField', 'props': {'model': 'password', 'label': 'Jackett管理密码 (可选)', 'type': 'password', 'placeholder': 'Jackett管理界面配置的Admin password，如未配置可为空。'}},
             {
                 'component': 'VBtn',
                 'props': {
@@ -308,12 +274,11 @@ class Jackett(_PluginBase):
                 'events': [
                     {
                         'name': 'click',
-                        # This VScript calls the backend API to trigger logging
                         'value': "() => { this.$axios.get('/api/v1/plugin/Jackett/jackett/trigger_log_configs').then(res => { if(res.data.code === 0) { this.$toast.success(res.data.message || '操作成功，请查看日志。'); } else { this.$toast.error(res.data.message || '操作失败，请查看日志。');} }).catch(err => this.$toast.error('触发日志记录请求失败: ' + (err.response?.data?.message || err.message))); }"
                     }
                 ]
             }
-        ], { # Default values for the form
+        ], { 
             "enabled": False, 
             "host": "", 
             "api_key": "", 
@@ -327,18 +292,12 @@ class Jackett(_PluginBase):
         logger.info(f"【{self.plugin_name} ({self.__class__.__name__})】插件服务已停止。")
 
     def get_page(self) -> Optional[List[dict]]:
-        """
-        此插件不再需要自定义UI页面来显示数据，配置通过 get_form() 处理。
-        """
         return None 
 
     def get_api(self) -> List[dict]:
-        """
-        API接口，用于手动触发日志记录。
-        """
         return [
             {
-                "path": "/jackett/trigger_log_configs", # Path relative to /api/v1/plugin/Jackett/
+                "path": "/jackett/trigger_log_configs", 
                 "endpoint": self.api_trigger_log_configs,
                 "methods": ["GET"],
                 "summary": "手动触发记录Jackett索引器配置到日志",
@@ -355,5 +314,5 @@ class Jackett(_PluginBase):
             logger.warn(f"【{self.plugin_name}】Jackett Host或API Key未配置，无法手动记录配置。")
             return {"code": 1, "message": "Jackett Host或API Key未配置，请在插件设置中配置。"}
         
-        self.log_jackett_indexer_configs() # Call the main logging function
+        self.log_jackett_indexer_configs()
         return {"code": 0, "message": "已尝试记录Jackett索引器配置到MoviePilot日志，请查看日志获取结果。"}
