@@ -151,14 +151,29 @@ class Jackett(_PluginBase):
                 return None
 
             moviepilot_internal_id = f"jackett_{indexer_id_from_jackett.lower().replace('-', '_')}" 
-
-            categories = {
-                "movie": [{"id": "2000", "desc": "Movies"}, {"id": "2010", "desc": "Movies/Foreign"}, {"id": "2020", "desc": "Movies/BluRay"}, {"id": "2030", "desc": "Movies/DVD"}, {"id": "2040", "desc": "Movies/HD"}, {"id": "2045", "desc": "Movies/UHD"}, {"id": "2050", "desc": "Movies/3D"}, {"id": "2060", "desc": "Movies/SD"}],
-                "tv": [{"id": "5000", "desc": "TV"}, {"id": "5020", "desc": "TV/Blu-ray"}, {"id": "5030", "desc": "TV/DVD"}, {"id": "5040", "desc": "TV/HD"}, {"id": "5050", "desc": "TV/SD"}, {"id": "5060", "desc": "TV/Foreign"}, {"id": "5070", "desc": "TV/Sport"}]
-            }
-            
             actual_jackett_host = self._host.rstrip('/')
-            
+
+            # Torznab 分类ID (这些是 Jackett/Torznab 标准分类ID)
+            # 我们需要将这些提供给 MoviePilot，以便它在搜索时能选择正确的ID替换 {cate_id}
+            # 这些ID应该是字符串类型，因为参考配置中是字符串。
+            site_categories = [
+                {"id": "2000", "name": "Movies"},
+                {"id": "2010", "name": "Movies/Foreign"},
+                {"id": "2030", "name": "Movies/SD"}, # Combining SD/DVD etc.
+                {"id": "2040", "name": "Movies/HD"}, # Combining HD/BluRay etc.
+                {"id": "2045", "name": "Movies/UHD"},
+                {"id": "2060", "name": "Movies/3D"},
+                # {"id": "2070", "name": "Movies/DVD"}, # Example of a more specific one if needed
+
+                {"id": "5000", "name": "TV"},
+                {"id": "5030", "name": "TV/SD"},
+                {"id": "5040", "name": "TV/HD"},
+                # {"id": "5070", "name": "TV/Anime"}, # Nyaa example handles anime differently
+                # {"id": "5080", "name": "TV/Documentary"},
+            ]
+            # 你可以根据 Jackett indexer 的 `caps` (capabilities) 动态生成这个列表，
+            # 但为简化，我们先用一个固定的通用列表。
+
             mp_indexer_config_json = {
                 "id": moviepilot_internal_id,
                 "name": f"[Jackett] {indexer_name_from_jackett}",
@@ -168,7 +183,11 @@ class Jackett(_PluginBase):
                 "public": True, 
                 "proxy": True,
                 "language": "zh_CN", 
-                "category": categories,
+                
+                # 这个 category 字段提供了可供 MoviePilot 在其UI中显示并让用户选择的分类
+                # 当用户选择一个分类时，MoviePilot 会使用对应条目的 "id" 来替换搜索参数中的 {cate_id}
+                "category": site_categories, 
+                
                 "search": {
                     "paths": [
                         {
@@ -176,24 +195,27 @@ class Jackett(_PluginBase):
                             "method": "get"
                         }
                     ],
-                    "params": {
+                    "params": { 
                         "t": "search",
                         "q": "{keyword}",
-                        "cat": "{cat}",
+                        # 使用 {cate_id} 占位符，MoviePilot会用上面 "category" 列表中选定项的 "id" 来替换
+                        "cat": "{cate_id}", 
                         "apikey": self._api_key
                     }
                 },
-                "torrents": {
+                "torrents": { # Torrents parsing rules, same as before
                     "list": {"selector": "item"},
-                    "fields": {
-                        "title": {"selector": "title"}, "details": {"selector": "guid"}, 
-                        "download": {"selector": "link"}, "size": {"selector": "size"}, 
-                        "date_added": {"selector": "pubDate", "optional": True},
-                        "seeders": {"selector": "torznab:attr[name=seeders]", "filters": [{"name": "re", "args": ["(\\d+)", 1]}], "default": "0"},
-                        "leechers": {"selector": "torznab:attr[name=peers]", "filters": [{"name": "re", "args": ["(\\d+)", 1]}], "default": "0"}, 
-                        "downloadvolumefactor": {"case": {"*": 0}}, "uploadvolumefactor": {"case": {"*": 1}}
-                    }
+                    "fields": { /* ... (fields as before) ... */ }
                 }
+            }
+            # Ensure torrents fields are complete
+            mp_indexer_config_json["torrents"]["fields"] = {
+                "title": {"selector": "title"}, "details": {"selector": "guid"}, 
+                "download": {"selector": "link"}, "size": {"selector": "size"}, 
+                "date_added": {"selector": "pubDate", "optional": True},
+                "seeders": {"selector": "torznab:attr[name=seeders]", "filters": [{"name": "re", "args": ["(\\d+)", 1]}], "default": "0"},
+                "leechers": {"selector": "torznab:attr[name=peers]", "filters": [{"name": "re", "args": ["(\\d+)", 1]}], "default": "0"}, 
+                "downloadvolumefactor": {"case": {"*": 0}}, "uploadvolumefactor": {"case": {"*": 1}}
             }
             logger.debug(f"【{self.plugin_name}】格式化MoviePilot索引器配置JSON完成 for '{moviepilot_internal_id}'")
             return mp_indexer_config_json
