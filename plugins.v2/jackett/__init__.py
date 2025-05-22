@@ -14,7 +14,7 @@ class Jackett(_PluginBase):
     plugin_name = "Jackett 配置日志输出器"
     plugin_desc = "从 Jackett 获取索引器，格式化为“自定义索引站点”插件配置，并输出到 MoviePilot 日志中。"
     plugin_icon = "https://raw.githubusercontent.com/Jackett/Jackett/master/src/Jackett.Common/Content/favicon.ico"
-    plugin_version = "3.1" # Incremented version
+    plugin_version = "3.2" # Incremented version
     plugin_author = "jason (modified by AI)"
     author_url = "https://github.com/xj-bear"
     plugin_config_prefix = "jackett_"
@@ -64,7 +64,6 @@ class Jackett(_PluginBase):
         with requests.Session() as session:
             if self._password:
                 login_url = f"{host}/UI/Login" 
-                # dashboard_check_url = f"{host}/UI/Dashboard" # Not strictly needed for check if login post is monitored
                 try:
                     logger.info(f"【{self.plugin_name}】尝试GET登录页面: {login_url}")
                     session.get(login_url, verify=False, timeout=10) 
@@ -72,7 +71,7 @@ class Jackett(_PluginBase):
                 except requests.exceptions.RequestException as e:
                     logger.warn(f"【{self.plugin_name}】GET登录页面失败: {e}")
 
-                login_submission_url = f"{host}/UI/Dashboard"
+                login_submission_url = f"{host}/UI/Dashboard" # Jackett's form often posts to dashboard
                 login_post_headers = {
                     "User-Agent": api_headers["User-Agent"],
                     "Content-Type": "application/x-www-form-urlencoded",
@@ -83,13 +82,13 @@ class Jackett(_PluginBase):
                     login_res = session.post(login_submission_url, data={"password": self._password}, headers=login_post_headers, verify=False, timeout=15, allow_redirects=True)
                     logger.info(f"【{self.plugin_name}】密码登录POST响应状态: {login_res.status_code}. URL после POST: {login_res.url}")
                     logger.info(f"【{self.plugin_name}】密码登录后Cookies: {session.cookies.get_dict()}")
-                    if "UI/Login" in login_res.url: # A simple check if redirected back to login
+                    if "UI/Login" in login_res.url:
                         logger.warn(f"【{self.plugin_name}】密码登录后似乎仍停留在登录页，登录可能未成功。")
                     else:
                         logger.info(f"【{self.plugin_name}】密码登录POST似乎已完成。")
                 except requests.exceptions.RequestException as e:
                     logger.error(f"【{self.plugin_name}】密码登录请求失败: {e}")
-            else: # No password provided, try warm-up
+            else:
                 warm_up_url = f"{host}/" 
                 try:
                     logger.info(f"【{self.plugin_name}】执行预热请求到: {warm_up_url}")
@@ -144,7 +143,7 @@ class Jackett(_PluginBase):
 
     def _format_indexer_for_moviepilot(self, jackett_indexer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
-            indexer_id_from_jackett = jackett_indexer.get("id", "")
+            indexer_id_from_jackett = jackett_indexer.get("id", "") 
             indexer_name_from_jackett = jackett_indexer.get("name", "")
             if not indexer_id_from_jackett or not indexer_name_from_jackett:
                 logger.warn(f"【{self.plugin_name}】Jackett索引器数据不完整 (缺少ID或名称): {jackett_indexer}")
@@ -153,26 +152,26 @@ class Jackett(_PluginBase):
             moviepilot_internal_id = f"jackett_{indexer_id_from_jackett.lower().replace('-', '_')}" 
             actual_jackett_host = self._host.rstrip('/')
 
-            # Torznab 分类ID (这些是 Jackett/Torznab 标准分类ID)
-            # 我们需要将这些提供给 MoviePilot，以便它在搜索时能选择正确的ID替换 {cate_id}
-            # 这些ID应该是字符串类型，因为参考配置中是字符串。
+            # Define a list of categories this site supports, for MoviePilot to use.
+            # These IDs are standard Torznab category IDs. Use strings as per reference.
             site_categories = [
-                {"id": "2000", "name": "Movies"},
-                {"id": "2010", "name": "Movies/Foreign"},
-                {"id": "2030", "name": "Movies/SD"}, # Combining SD/DVD etc.
-                {"id": "2040", "name": "Movies/HD"}, # Combining HD/BluRay etc.
+                {"id": "2000", "name": "Movies - General"}, # More generic name for UI
+                {"id": "2030", "name": "Movies/SD"},
+                {"id": "2040", "name": "Movies/HD"},
                 {"id": "2045", "name": "Movies/UHD"},
                 {"id": "2060", "name": "Movies/3D"},
-                # {"id": "2070", "name": "Movies/DVD"}, # Example of a more specific one if needed
+                # You can add more specific movie categories from Torznab spec if needed
+                # e.g., {"id": "2010", "name": "Movies/Foreign"}, etc.
 
-                {"id": "5000", "name": "TV"},
+                {"id": "5000", "name": "TV - General"}, # More generic name for UI
                 {"id": "5030", "name": "TV/SD"},
                 {"id": "5040", "name": "TV/HD"},
-                # {"id": "5070", "name": "TV/Anime"}, # Nyaa example handles anime differently
-                # {"id": "5080", "name": "TV/Documentary"},
+                # Add more TV categories if needed
+                # e.g., {"id": "5070", "name": "TV/Anime"} (but check if this specific indexer supports it well)
             ]
-            # 你可以根据 Jackett indexer 的 `caps` (capabilities) 动态生成这个列表，
-            # 但为简化，我们先用一个固定的通用列表。
+            # For a more dynamic approach, you could parse jackett_indexer.get("caps", [])
+            # and map them to a predefined set of MoviePilot-friendly category names.
+            # But for now, a fixed list is simpler to start with.
 
             mp_indexer_config_json = {
                 "id": moviepilot_internal_id,
@@ -181,13 +180,9 @@ class Jackett(_PluginBase):
                 "url": actual_jackett_host,    
                 "encoding": "UTF-8",
                 "public": True, 
-                "proxy": True,
+                "proxy": True, 
                 "language": "zh_CN", 
-                
-                # 这个 category 字段提供了可供 MoviePilot 在其UI中显示并让用户选择的分类
-                # 当用户选择一个分类时，MoviePilot 会使用对应条目的 "id" 来替换搜索参数中的 {cate_id}
-                "category": site_categories, 
-                
+                "category": site_categories, # Use the flat list of categories
                 "search": {
                     "paths": [
                         {
@@ -198,24 +193,23 @@ class Jackett(_PluginBase):
                     "params": { 
                         "t": "search",
                         "q": "{keyword}",
-                        # 使用 {cate_id} 占位符，MoviePilot会用上面 "category" 列表中选定项的 "id" 来替换
-                        "cat": "{cate_id}", 
+                        "cat": "{cate_id}", # Use {cate_id} - MoviePilot should replace this
+                                           # with the 'id' from the 'category' list above,
+                                           # based on user's selection in MoviePilot site settings.
                         "apikey": self._api_key
                     }
                 },
-                "torrents": { # Torrents parsing rules, same as before
+                "torrents": {
                     "list": {"selector": "item"},
-                    "fields": { /* ... (fields as before) ... */ }
+                    "fields": {
+                        "title": {"selector": "title"}, "details": {"selector": "guid"}, 
+                        "download": {"selector": "link"}, "size": {"selector": "size"}, 
+                        "date_added": {"selector": "pubDate", "optional": True},
+                        "seeders": {"selector": "torznab:attr[name=seeders]", "filters": [{"name": "re", "args": ["(\\d+)", 1]}], "default": "0"},
+                        "leechers": {"selector": "torznab:attr[name=peers]", "filters": [{"name": "re", "args": ["(\\d+)", 1]}], "default": "0"}, 
+                        "downloadvolumefactor": {"case": {"*": 0}}, "uploadvolumefactor": {"case": {"*": 1}}
+                    }
                 }
-            }
-            # Ensure torrents fields are complete
-            mp_indexer_config_json["torrents"]["fields"] = {
-                "title": {"selector": "title"}, "details": {"selector": "guid"}, 
-                "download": {"selector": "link"}, "size": {"selector": "size"}, 
-                "date_added": {"selector": "pubDate", "optional": True},
-                "seeders": {"selector": "torznab:attr[name=seeders]", "filters": [{"name": "re", "args": ["(\\d+)", 1]}], "default": "0"},
-                "leechers": {"selector": "torznab:attr[name=peers]", "filters": [{"name": "re", "args": ["(\\d+)", 1]}], "default": "0"}, 
-                "downloadvolumefactor": {"case": {"*": 0}}, "uploadvolumefactor": {"case": {"*": 1}}
             }
             logger.debug(f"【{self.plugin_name}】格式化MoviePilot索引器配置JSON完成 for '{moviepilot_internal_id}'")
             return mp_indexer_config_json
