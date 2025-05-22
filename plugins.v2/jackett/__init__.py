@@ -1,6 +1,6 @@
 import base64
 import json
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple # Tuple is used by get_form
 import time
 import requests
 
@@ -14,7 +14,7 @@ class Jackett(_PluginBase):
     plugin_name = "Jackett 配置日志输出器"
     plugin_desc = "从 Jackett 获取索引器，格式化为“自定义索引站点”插件配置，并输出到 MoviePilot 日志中。"
     plugin_icon = "https://raw.githubusercontent.com/Jackett/Jackett/master/src/Jackett.Common/Content/favicon.ico"
-    plugin_version = "3.2" # Incremented version
+    plugin_version = "3.3" # Incremented version
     plugin_author = "jason (modified by AI)"
     author_url = "https://github.com/xj-bear"
     plugin_config_prefix = "jackett_"
@@ -71,7 +71,7 @@ class Jackett(_PluginBase):
                 except requests.exceptions.RequestException as e:
                     logger.warn(f"【{self.plugin_name}】GET登录页面失败: {e}")
 
-                login_submission_url = f"{host}/UI/Dashboard" # Jackett's form often posts to dashboard
+                login_submission_url = f"{host}/UI/Dashboard"
                 login_post_headers = {
                     "User-Agent": api_headers["User-Agent"],
                     "Content-Type": "application/x-www-form-urlencoded",
@@ -152,27 +152,17 @@ class Jackett(_PluginBase):
             moviepilot_internal_id = f"jackett_{indexer_id_from_jackett.lower().replace('-', '_')}" 
             actual_jackett_host = self._host.rstrip('/')
 
-            # Define a list of categories this site supports, for MoviePilot to use.
-            # These IDs are standard Torznab category IDs. Use strings as per reference.
             site_categories = [
-                {"id": "2000", "name": "Movies - General"}, # More generic name for UI
+                {"id": "2000", "name": "Movies - General"},
                 {"id": "2030", "name": "Movies/SD"},
                 {"id": "2040", "name": "Movies/HD"},
                 {"id": "2045", "name": "Movies/UHD"},
                 {"id": "2060", "name": "Movies/3D"},
-                # You can add more specific movie categories from Torznab spec if needed
-                # e.g., {"id": "2010", "name": "Movies/Foreign"}, etc.
-
-                {"id": "5000", "name": "TV - General"}, # More generic name for UI
+                {"id": "5000", "name": "TV - General"},
                 {"id": "5030", "name": "TV/SD"},
                 {"id": "5040", "name": "TV/HD"},
-                # Add more TV categories if needed
-                # e.g., {"id": "5070", "name": "TV/Anime"} (but check if this specific indexer supports it well)
             ]
-            # For a more dynamic approach, you could parse jackett_indexer.get("caps", [])
-            # and map them to a predefined set of MoviePilot-friendly category names.
-            # But for now, a fixed list is simpler to start with.
-
+            
             mp_indexer_config_json = {
                 "id": moviepilot_internal_id,
                 "name": f"[Jackett] {indexer_name_from_jackett}",
@@ -182,7 +172,7 @@ class Jackett(_PluginBase):
                 "public": True, 
                 "proxy": True, 
                 "language": "zh_CN", 
-                "category": site_categories, # Use the flat list of categories
+                "category": site_categories, 
                 "search": {
                     "paths": [
                         {
@@ -193,9 +183,7 @@ class Jackett(_PluginBase):
                     "params": { 
                         "t": "search",
                         "q": "{keyword}",
-                        "cat": "{cate_id}", # Use {cate_id} - MoviePilot should replace this
-                                           # with the 'id' from the 'category' list above,
-                                           # based on user's selection in MoviePilot site settings.
+                        "cat": "{cate_id}", 
                         "apikey": self._api_key
                     }
                 },
@@ -263,12 +251,52 @@ class Jackett(_PluginBase):
         logger.info(f"【{self.plugin_name}】Jackett索引器配置记录过程结束。")
 
     def get_form(self) -> Tuple[List[dict], dict]:
+        """
+        获取配置表单，用于用户输入Jackett信息和启用插件。
+        """
         return [
-            {'component': 'VAlert', 'props': {'type': 'info', 'text': '启用并配置Jackett服务器信息后，插件会自动获取Jackett中的索引器，并将其“自定义索引站点”配置字符串输出到MoviePilot的日志中。您需要从日志中复制这些配置。', 'class': 'mb-4'}},
-            {'component': 'VSwitch', 'props': {'model': 'enabled', 'label': '启用插件'}},
-            {'component': 'VTextField', 'props': {'model': 'host', 'label': 'Jackett地址', 'placeholder': 'http://localhost:9117', 'hint': '请输入Jackett的完整地址，包括http或https前缀。'}},
-            {'component': 'VTextField', 'props': {'model': 'api_key', 'label': 'API Key', 'type': 'password', 'placeholder': 'Jackett管理界面右上角的API Key'}},
-            {'component': 'VTextField', 'props': {'model': 'password', 'label': 'Jackett管理密码 (可选)', 'type': 'password', 'placeholder': 'Jackett管理界面配置的Admin password，如未配置可为空。API Key通常已足够。'}},
+            {
+                'component': 'VAlert',
+                'props': {
+                    'type': 'info',
+                    'text': '启用并配置Jackett服务器信息后，插件会自动获取Jackett中的索引器，并将其“自定义索引站点”配置字符串输出到MoviePilot的日志中。您需要从日志中复制这些配置。点击下方按钮可手动触发一次日志记录。',
+                    'class': 'mb-4'
+                }
+            },
+            {
+                'component': 'VSwitch',
+                'props': {
+                    'model': 'enabled',
+                    'label': '启用插件'
+                }
+            },
+            {
+                'component': 'VTextField',
+                'props': {
+                    'model': 'host',
+                    'label': 'Jackett地址',
+                    'placeholder': 'http://localhost:9117',
+                    'hint': '请输入Jackett的完整地址，包括http或https前缀。'
+                }
+            },
+            {
+                'component': 'VTextField',
+                'props': {
+                    'model': 'api_key',
+                    'label': 'API Key',
+                    'type': 'password', # Mask input
+                    'placeholder': 'Jackett管理界面右上角的API Key'
+                }
+            },
+            {
+                'component': 'VTextField',
+                'props': {
+                    'model': 'password',
+                    'label': 'Jackett管理密码 (可选)',
+                    'type': 'password', # Mask input
+                    'placeholder': 'Jackett管理界面配置的Admin password，如未配置可为空。'
+                }
+            },
             {
                 'component': 'VBtn',
                 'props': {
@@ -280,11 +308,17 @@ class Jackett(_PluginBase):
                 'events': [
                     {
                         'name': 'click',
-                        'value': "() => { this.$axios.get('/api/v1/plugin/Jackett/jackett/trigger_log_configs').then(res => this.$toast.info(res.data.message || '操作完成，请查看日志。')).catch(err => this.$toast.error('触发日志记录失败: ' + (err.response?.data?.message || err.message))); }"
+                        # This VScript calls the backend API to trigger logging
+                        'value': "() => { this.$axios.get('/api/v1/plugin/Jackett/jackett/trigger_log_configs').then(res => { if(res.data.code === 0) { this.$toast.success(res.data.message || '操作成功，请查看日志。'); } else { this.$toast.error(res.data.message || '操作失败，请查看日志。');} }).catch(err => this.$toast.error('触发日志记录请求失败: ' + (err.response?.data?.message || err.message))); }"
                     }
                 ]
             }
-        ], {"enabled": False, "host": "", "api_key": "", "password": ""}
+        ], { # Default values for the form
+            "enabled": False, 
+            "host": "", 
+            "api_key": "", 
+            "password": ""
+        }
 
     def get_state(self) -> bool:
         return self._enabled
@@ -293,12 +327,18 @@ class Jackett(_PluginBase):
         logger.info(f"【{self.plugin_name} ({self.__class__.__name__})】插件服务已停止。")
 
     def get_page(self) -> Optional[List[dict]]:
+        """
+        此插件不再需要自定义UI页面来显示数据，配置通过 get_form() 处理。
+        """
         return None 
 
     def get_api(self) -> List[dict]:
+        """
+        API接口，用于手动触发日志记录。
+        """
         return [
             {
-                "path": "/jackett/trigger_log_configs",
+                "path": "/jackett/trigger_log_configs", # Path relative to /api/v1/plugin/Jackett/
                 "endpoint": self.api_trigger_log_configs,
                 "methods": ["GET"],
                 "summary": "手动触发记录Jackett索引器配置到日志",
@@ -315,5 +355,5 @@ class Jackett(_PluginBase):
             logger.warn(f"【{self.plugin_name}】Jackett Host或API Key未配置，无法手动记录配置。")
             return {"code": 1, "message": "Jackett Host或API Key未配置，请在插件设置中配置。"}
         
-        self.log_jackett_indexer_configs()
+        self.log_jackett_indexer_configs() # Call the main logging function
         return {"code": 0, "message": "已尝试记录Jackett索引器配置到MoviePilot日志，请查看日志获取结果。"}
